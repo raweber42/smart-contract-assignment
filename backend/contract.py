@@ -27,7 +27,7 @@ class SmartContract:
 
     def topup_student(self, amount):
         self.balances["student"] += amount
-        self.log(f"Student wallet topped up by {amount} USD.")
+        self.log(f"Student wallet topped up by ${amount:.2f}.")
         return True, "Top-up successful."
 
     def fund_lesson(self, price=30, lesson_title="Lesson"):
@@ -45,14 +45,14 @@ class SmartContract:
         total_deduction = price + tx_fee
 
         if self.balances["student"] < total_deduction:
-            return False, f"Insufficient funds. Need {total_deduction} USD."
+            return False, f"Insufficient funds. Need ${total_deduction:.2f}."
 
         self.balances["student"] -= total_deduction
         self.balances["contract"] += price
         self.status = "FUNDED"
         
         tx_hash = f"0x{abs(hash(str(time.time()) + 'fund'))}"
-        self.log(f"Student funded '{lesson_title}' ({price} USD + {tx_fee:.2f} fee). Funds locked in Escrow.", tx_hash)
+        self.log(f"Student funded '{lesson_title}' (${price:.2f} - ${tx_fee:.2f} fee). Funds locked in Escrow.", tx_hash)
         return True, "Lesson funded successfully."
 
     def resolve_lesson(self, teacher_duration, student_duration, oracle_data=None, required_duration=60):
@@ -62,31 +62,29 @@ class SmartContract:
         self.last_oracle_data = oracle_data
 
         # Logic from the prompt
-        # Happy Path: Teacher >= 90% AND Student >= 90%
-        # Student No-Show: Teacher >= 90% AND Student < 10%
-        # Teacher No-Show: Teacher < 10% AND Student >= 90%
+        # Happy Path: Teacher >= 95% AND Student >= 95%
+        # Student No-Show: Student < 95%
+        # Teacher No-Show: Teacher < 95%
         
-        threshold = required_duration * 0.9
-        min_threshold = required_duration * 0.1
+        min_threshold = required_duration * 0.95
 
         payout_teacher = False
         refund_student = False
         
         outcome = "Unknown"
+        
+        teacher_pct = (teacher_duration / required_duration) * 100
+        student_pct = (student_duration / required_duration) * 100
 
-        if teacher_duration >= threshold and student_duration >= threshold:
+        if teacher_duration >= min_threshold and student_duration >= min_threshold:
             outcome = "Happy Path: Lesson Completed Successfully."
             payout_teacher = True
-        elif teacher_duration >= threshold and student_duration < min_threshold:
-            outcome = "Student No-Show: Teacher compensated."
-            payout_teacher = True
-        elif teacher_duration < min_threshold and student_duration >= threshold:
-            outcome = "Teacher No-Show: Student refunded."
+        elif teacher_duration < min_threshold:
+            outcome = f"Teacher No-Show: Student refunded. (Teacher attended {teacher_pct:.0f}%, which is less than the required minimum of 95%)"
             refund_student = True
         else:
-            # Fallback / Dispute / Partial - For MVP treat as refund or hold
-            outcome = "Dispute/Irregular: Manual intervention required. (Refunding for MVP)"
-            refund_student = True
+            outcome = f"Student No-Show: Teacher compensated. (Teacher was present {teacher_pct:.0f}% of the time, Student only attended {student_pct:.0f}%)"
+            payout_teacher = True
         
         self.last_outcome = outcome
         tx_hash = f"0x{abs(hash(str(time.time()) + 'resolve'))}"
@@ -105,7 +103,7 @@ class SmartContract:
             self.balances["platform"] += platform_fee
             
             self.status = "COMPLETED"
-            self.log(f"Oracle Resolution: {outcome} -> Payout {net_payout:.2f} to Teacher (Fees: {platform_fee:.2f} Platform, {tx_fee:.2f} Tx).", tx_hash)
+            self.log(f"Oracle Resolution: {outcome} -> Payout ${net_payout:.2f} to Teacher (Fees: ${platform_fee:.2f} Platform, ${tx_fee:.2f} Tx).", tx_hash)
         
         elif refund_student:
             gross_refund = self.balances["contract"]
@@ -116,7 +114,7 @@ class SmartContract:
             self.balances["student"] += net_refund
             
             self.status = "REFUNDED"
-            self.log(f"Oracle Resolution: {outcome} -> Refund {net_refund:.2f} to Student (Tx Fee: {tx_fee:.2f}).", tx_hash)
+            self.log(f"Oracle Resolution: {outcome} -> Refund ${net_refund:.2f} to Student (Tx Fee: ${tx_fee:.2f}).", tx_hash)
 
         return True, outcome
 

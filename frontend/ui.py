@@ -1,12 +1,219 @@
 import streamlit as st
-import requests
 import time
+import random
 
 # Configuration
-API_URL = "http://127.0.0.1:5000/api"
-MATIC_RATE = 1.5 # 1 USD = 1.5 MATIC (Mock)
+MATIC_RATE = 8.09 # 1 USD = 8.09 MATIC (State of 12/09/2025: https://de.tradingview.com/symbols/MATICUSD/)
 
 st.set_page_config(page_title="Smart Contract Tutor", page_icon="👨🏼‍🏫", layout="wide")
+
+# ============================================
+# Smart Contract Logic (embedded)
+# ============================================
+class SmartContract:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        # Initial Balances (Mock USD)
+        self.balances = {
+            "student": 100,
+            "teacher": 0,
+            "contract": 0,
+            "platform": 0
+        }
+        self.status = "CREATED" # CREATED, FUNDED, COMPLETED, REFUNDED
+        self.lesson_price = 30
+        self.platform_fee_percent = 0.02
+        self.tx_fee_percent = 0.001 
+        self.logs = []
+        self.last_oracle_data = None
+        self.last_outcome = None
+        self.transactions = []
+
+    def log(self, message, tx_hash=None):
+        self.logs.append({"message": message, "tx_hash": tx_hash})
+
+    def topup_student(self, amount):
+        self.balances["student"] += amount
+        self.log(f"Student wallet topped up by ${amount:.2f}.")
+        return True, "Top-up successful."
+
+    def fund_lesson(self, price=30, lesson_title="Lesson"):
+        if self.status not in ["CREATED", "COMPLETED", "REFUNDED"]:
+            return False, "Contract already funded."
+        
+        # Reset state for new lesson if previous was completed
+        if self.status in ["COMPLETED", "REFUNDED"]:
+            self.status = "CREATED"
+            self.last_oracle_data = None
+            self.last_outcome = None
+        
+        self.lesson_price = price
+        tx_fee = price * self.tx_fee_percent
+        total_deduction = price + tx_fee
+
+        if self.balances["student"] < total_deduction:
+            return False, f"Insufficient funds. Need ${total_deduction:.2f}."
+
+        self.balances["student"] -= total_deduction
+        self.balances["contract"] += price
+        self.status = "FUNDED"
+        
+        tx_hash = f"0x{abs(hash(str(time.time()) + 'fund'))}"
+        self.log(f"Student funded '{lesson_title}' (${price:.2f} - ${tx_fee:.2f} fee). Funds locked in Escrow.", tx_hash)
+        return True, "Lesson funded successfully."
+
+    def resolve_lesson(self, teacher_duration, student_duration, oracle_data=None, required_duration=60):
+        if self.status != "FUNDED":
+            return False, "Contract not in funded state."
+
+        self.last_oracle_data = oracle_data
+
+        min_threshold = required_duration * 0.95
+
+        payout_teacher = False
+        refund_student = False
+        
+        outcome = "Unknown"
+        
+        teacher_pct = (teacher_duration / required_duration) * 100
+        student_pct = (student_duration / required_duration) * 100
+
+        if teacher_duration >= min_threshold and student_duration >= min_threshold:
+            outcome = "Happy Path: Lesson Completed Successfully."
+            payout_teacher = True
+        elif teacher_duration < min_threshold:
+            outcome = f"Teacher No-Show: Student refunded. (Teacher attended {teacher_pct:.0f}%, which is less than the required minimum of 95%)"
+            refund_student = True
+        else:
+            outcome = f"Student No-Show: Teacher compensated. (Teacher was present {teacher_pct:.0f}% of the time, Student only attended {student_pct:.0f}%)"
+            payout_teacher = True
+        
+        self.last_outcome = outcome
+        tx_hash = f"0x{abs(hash(str(time.time()) + 'resolve'))}"
+
+        if payout_teacher:
+            contract_balance = self.balances["contract"]
+            
+            platform_fee = contract_balance * self.platform_fee_percent
+            gross_payout = contract_balance - platform_fee
+            
+            tx_fee = gross_payout * self.tx_fee_percent
+            net_payout = gross_payout - tx_fee
+            
+            self.balances["contract"] = 0
+            self.balances["teacher"] += net_payout
+            self.balances["platform"] += platform_fee
+            
+            self.status = "COMPLETED"
+            self.log(f"Oracle Resolution: {outcome} -> Payout ${net_payout:.2f} to Teacher (Fees: ${platform_fee:.2f} Platform, ${tx_fee:.2f} Tx).", tx_hash)
+        
+        elif refund_student:
+            gross_refund = self.balances["contract"]
+            tx_fee = gross_refund * self.tx_fee_percent
+            net_refund = gross_refund - tx_fee
+            
+            self.balances["contract"] = 0
+            self.balances["student"] += net_refund
+            
+            self.status = "REFUNDED"
+            self.log(f"Oracle Resolution: {outcome} -> Refund ${net_refund:.2f} to Student (Tx Fee: ${tx_fee:.2f}).", tx_hash)
+
+        return True, outcome
+
+    def get_state(self):
+        return {
+            "balances": self.balances,
+            "status": self.status,
+            "logs": self.logs,
+            "lesson_price": self.lesson_price,
+            "last_oracle_data": self.last_oracle_data,
+            "last_outcome": self.last_outcome
+        }
+
+
+# ============================================
+# Oracle Logic (embedded)
+# ============================================
+class Oracle:
+    def __init__(self):
+        self.scenario = "happy_path" # Default
+
+    def set_scenario(self, scenario_key):
+        self.scenario = scenario_key
+
+    def get_meeting_data(self):
+        # Simulating Google Meet API response
+        # Returns duration in minutes
+        
+        if self.scenario == "happy_path":
+            return {
+                "teacher_duration": 60,
+                "student_duration": 60,
+                "raw_json": {
+                    "meetingCode": "abc-defg-hij",
+                    "participants": [
+                        {"email": "teacher@uni.com", "durationSeconds": 3600},
+                        {"email": "student@uni.com", "durationSeconds": 3600}
+                    ]
+                }
+            }
+        elif self.scenario == "student_no_show":
+            return {
+                "teacher_duration": 60,
+                "student_duration": 0,
+                "raw_json": {
+                    "meetingCode": "abc-defg-hij",
+                    "participants": [
+                        {"email": "teacher@uni.com", "durationSeconds": 3600}
+                    ]
+                }
+            }
+        elif self.scenario == "teacher_no_show":
+            return {
+                "teacher_duration": 0,
+                "student_duration": 60,
+                "raw_json": {
+                    "meetingCode": "abc-defg-hij",
+                    "participants": [
+                        {"email": "student@uni.com", "durationSeconds": 3600}
+                    ]
+                }
+            }
+        elif self.scenario == "random":
+            t_dur = random.randint(0, 60)
+            s_dur = random.randint(0, 60)
+            return {
+                "teacher_duration": t_dur,
+                "student_duration": s_dur,
+                "raw_json": {
+                    "meetingCode": "abc-defg-hij",
+                    "participants": [
+                        {"email": "teacher@uni.com", "durationSeconds": t_dur * 60},
+                        {"email": "student@uni.com", "durationSeconds": s_dur * 60}
+                    ]
+                }
+            }
+        else:
+            # Default fallback
+            return {
+                "teacher_duration": 0,
+                "student_duration": 0,
+                "raw_json": {}
+            }
+
+
+# ============================================
+# Initialize Session State
+# ============================================
+if "contract" not in st.session_state:
+    st.session_state.contract = SmartContract()
+if "oracle" not in st.session_state:
+    st.session_state.oracle = Oracle()
+
+contract = st.session_state.contract
+oracle = st.session_state.oracle
 
 # Custom CSS (Dark Lovable Theme)
 st.markdown("""
@@ -108,10 +315,7 @@ st.markdown("""
 
 # --- Helper Functions ---
 def get_state():
-    try:
-        return requests.get(f"{API_URL}/state").json()
-    except:
-        return None
+    return contract.get_state()
 
 def format_currency(amount):
     matic_val = amount * MATIC_RATE
@@ -122,7 +326,7 @@ def format_matic(amount):
     return f"~{matic_val:.2f} MATIC"
 
 # --- Sidebar ---
-st.sidebar.title("Simulation Controls")
+st.sidebar.title("Settings")
 
 # Lesson Price Configuration
 lesson_price = st.sidebar.number_input("Lesson Price (USD)", min_value=10, max_value=1000, value=30, step=5)
@@ -137,8 +341,23 @@ st.sidebar.markdown("---")
 
 # Add Funds
 st.sidebar.subheader("Wallet Management")
+
+st.sidebar.markdown(
+    """
+    <div style="text-align: center; margin-bottom: 15px;">
+        <a href="https://polygon.com" target="_blank">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=https://polygon.com" style="border-radius: 10px; border: 2px solid #333;">
+        </a>
+        <div style="font-size: 0.8em; color: #A0AEC0; margin-top: 5px;">
+            Scan to fund Student Wallet
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 if st.sidebar.button("Add 100 USD to Student"):
-    requests.post(f"{API_URL}/topup", json={"amount": 100})
+    contract.topup_student(100)
     st.toast("Added 100 USD", icon="💰")
     time.sleep(0.5)
     st.rerun()
@@ -147,13 +366,14 @@ st.sidebar.markdown("---")
 
 scenario = st.sidebar.selectbox(
     "Select Scenario",
-    ("Happy Path", "Student No-Show", "Teacher No-Show")
+    ("Happy Path", "Student No-Show", "Teacher No-Show", "Random")
 )
 
 scenario_map = {
     "Happy Path": "happy_path",
     "Student No-Show": "student_no_show",
-    "Teacher No-Show": "teacher_no_show"
+    "Teacher No-Show": "teacher_no_show",
+    "Random": "random"
 }
 
 # Removed manual "Apply Scenario" button to avoid confusion. 
@@ -161,7 +381,7 @@ scenario_map = {
 
 st.sidebar.markdown("---")
 if st.sidebar.button("Reset System"):
-    requests.post(f"{API_URL}/reset")
+    contract.reset()
     st.rerun()
 
 # --- Main UI ---
@@ -177,10 +397,6 @@ st.markdown("**Teacher:** Alice (Verified)")
 # Fetch State
 state = get_state()
 
-if not state:
-    st.error("Backend is not running. Please start the Flask server.")
-    st.stop()
-
 balances = state['balances']
 status = state['status']
 logs = state['logs']
@@ -192,12 +408,16 @@ col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(label="Student Wallet", value=format_currency(balances['student']), delta=format_matic(balances['student']), delta_color="off")
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xStudent)", unsafe_allow_html=True)
 with col2:
     st.metric(label="Smart Contract (Escrow)", value=format_currency(balances['contract']), delta=format_matic(balances['contract']), delta_color="off")
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xContract)", unsafe_allow_html=True)
 with col3:
     st.metric(label="Teacher Wallet", value=format_currency(balances['teacher']), delta=format_matic(balances['teacher']), delta_color="off")
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xTeacher)", unsafe_allow_html=True)
 with col4:
     st.metric(label="Platform Wallet", value=format_currency(balances['platform']), delta=format_matic(balances['platform']), delta_color="off")
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xPlatform)", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -207,89 +427,91 @@ st.subheader("📝 Lesson Workflow")
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.markdown("#### 1. Agreement & Funding")
-    
-    # Prominent Booking Card
-    st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, rgba(155, 135, 245, 0.1) 0%, rgba(126, 105, 171, 0.1) 100%);
-        border: 1px solid #9b87f5;
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-        margin-bottom: 20px;
-    ">
-        <div style="color: #D6BCFA; font-size: 0.9em; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Booking Details</div>
-        <h3 style="color: #FFFFFF; margin: 0; font-size: 1.5em;">{lesson_type}</h3>
-        <div style="font-size: 2.5em; font-weight: 800; color: #9b87f5; margin: 10px 0;">${lesson_price}</div>
-        <div style="color: #A0AEC0; font-size: 0.9em;">60 Minutes • Live 1-on-1</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if status == "CREATED":
-        if st.button(f"Fund Lesson ({lesson_price} USD)"):
-            res = requests.post(f"{API_URL}/fund", json={"price": lesson_price, "lesson_title": lesson_type})
-            if res.status_code == 200:
-                st.toast("Funded Successfully!", icon="✅")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error(res.json().get("message"))
-    elif status == "FUNDED":
-        st.success("✅ Lesson Funded")
-    elif status in ["COMPLETED", "REFUNDED"]:
-        # st.success("✅ Lesson Funded") # Removed as per request
-        st.markdown("---")
-        if st.button("Start New Lesson"):
-            # Funding again will reset the state in the backend logic
-            res = requests.post(f"{API_URL}/fund", json={"price": lesson_price, "lesson_title": lesson_type})
-            if res.status_code == 200:
-                st.toast("New Lesson Funded!", icon="✅")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error(res.json().get("message"))
+    with st.container(border=True):
+        st.markdown("#### 1. Agreement & Funding")
+        
+        # Prominent Booking Card
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(155, 135, 245, 0.1) 0%, rgba(126, 105, 171, 0.1) 100%);
+            border: 1px solid #9b87f5;
+            border-radius: 10px;
+            padding: 8px;
+            text-align: center;
+            margin-bottom: 10px;
+        ">
+            <div style="color: #D6BCFA; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;">Booking Details</div>
+            <h3 style="color: #FFFFFF; margin: 2px 0; font-size: 1.1em;">{lesson_type}</h3>
+            <div style="font-size: 1.8em; font-weight: 800; color: #9b87f5; line-height: 1.1;">${lesson_price}</div>
+            <div style="color: #A0AEC0; font-size: 0.75em;">60 Minutes • Live 1-on-1</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if status == "CREATED":
+            if st.button(f"Fund Lesson ({lesson_price} USD)"):
+                success, message = contract.fund_lesson(lesson_price, lesson_type)
+                if success:
+                    st.toast("Funded Successfully!", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(message)
+        elif status == "FUNDED":
+            st.success("✅ Lesson Funded")
+        elif status in ["COMPLETED", "REFUNDED"]:
+            st.markdown("---")
+            if st.button("Start New Lesson"):
+                success, message = contract.fund_lesson(lesson_price, lesson_type)
+                if success:
+                    st.toast("New Lesson Funded!", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(message)
 
 with c2:
-    st.markdown("#### 2. The Lesson")
-    st.markdown(f"*Scenario Active: {scenario}*")
-    st.markdown("Simulating Google Meet session...")
-    
-    if status == "FUNDED":
-        st.markdown(f"[**Join Google Meet**](https://meet.google.com/abc-defg-hij)")
-        st.info("Waiting for lesson completion...")
-    elif status in ["COMPLETED", "REFUNDED"]:
-        pass # Removed success message as per request
+    with st.container(border=True):
+        st.markdown("#### 2. The Lesson")
+        st.markdown("Simulating Google Meet session...")
+        
+        if status == "FUNDED":
+            st.markdown(f"[**Join Google Meet**](https://meet.google.com/fac-hbvx-pjz)")
+            st.info("Waiting for lesson completion...")
+        elif status in ["COMPLETED", "REFUNDED"]:
+            st.markdown("✅ Lesson completed")
 
 with c3:
-    st.markdown("#### 3. Oracle Resolution")
-    
-    # Always show Oracle Data if available
-    if state.get('last_oracle_data'):
-        with st.expander("View Oracle API Response", expanded=True):
-            st.json(state['last_oracle_data'])
-
-    if status == "FUNDED":
-        if st.button("Trigger Oracle Resolution"):
-            with st.spinner("Oracle querying Google Meet API..."):
-                time.sleep(1.5) # Fake delay for effect
-                # Send the current scenario selection to ensure it's applied
-                res = requests.post(f"{API_URL}/resolve", json={"scenario": scenario_map[scenario]}).json()
-                
-                # st.write(f"**Outcome:** {res['contract_outcome']}")
-                # with st.expander("View Oracle API Response"):
-                #     st.json(res['oracle_data'])
-                
-                time.sleep(1)
-                st.rerun()
-    elif status in ["COMPLETED", "REFUNDED"]:
-        outcome = state.get('last_outcome', 'Unknown')
+    with st.container(border=True):
+        st.markdown("#### 3. Oracle Resolution")
         
-        if "Happy Path" in outcome:
-            st.success(f"✅ Contract Settled: {outcome}")
-        else:
-            st.warning(f"⚠️ Contract Settled: {outcome}")
-            st.info("Funds have been redistributed according to the No-Show policy.")
+        # Always show Oracle Data if available
+        if state.get('last_oracle_data'):
+            with st.expander("View Oracle API Response", expanded=True):
+                st.json(state['last_oracle_data'])
+
+        if status == "FUNDED":
+            if st.button("Trigger Oracle Resolution"):
+                with st.spinner("Oracle querying Google Meet API..."):
+                    time.sleep(1.5) # Fake delay for effect
+                    # Set the scenario and get meeting data
+                    oracle.set_scenario(scenario_map[scenario])
+                    data = oracle.get_meeting_data()
+                    # Resolve the lesson via smart contract
+                    contract.resolve_lesson(
+                        teacher_duration=data['teacher_duration'],
+                        student_duration=data['student_duration'],
+                        oracle_data=data
+                    )
+                    time.sleep(1)
+                    st.rerun()
+        elif status in ["COMPLETED", "REFUNDED"]:
+            outcome = state.get('last_outcome', 'Unknown')
+            
+            if "Happy Path" in outcome:
+                st.success(f"✅ Contract Settled: {outcome}")
+            else:
+                st.warning(f"⚠️ Contract Settled: {outcome}")
+                st.info("Funds have been redistributed according to the No-Show policy.")
 
 # 3. Logs
 st.markdown("---")
@@ -304,7 +526,7 @@ for log in reversed(logs):
         msg = log
         tx = None
         
-    st.text(f"> {msg}")
+    st.code(f"> {msg}", language="text")
     if tx:
         st.markdown(f"[View Transaction on PolygonScan](https://amoy.polygonscan.com/tx/{tx})")
     st.markdown("---")

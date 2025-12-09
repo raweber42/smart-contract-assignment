@@ -1,3 +1,5 @@
+import random
+
 class Oracle:
     def __init__(self):
         self.scenario = "happy_path" # Default
@@ -40,6 +42,20 @@ class Oracle:
                     "meetingCode": "abc-defg-hij",
                     "participants": [
                         {"email": "student@uni.com", "durationSeconds": 3600}
+                    ]
+                }
+            }
+        elif self.scenario == "random":
+            t_dur = random.randint(0, 60)
+            s_dur = random.randint(0, 60)
+            return {
+                "teacher_duration": t_dur,
+                "student_duration": s_dur,
+                "raw_json": {
+                    "meetingCode": "abc-defg-hij",
+                    "participants": [
+                        {"email": "teacher@uni.com", "durationSeconds": t_dur * 60},
+                        {"email": "student@uni.com", "durationSeconds": s_dur * 60}
                     ]
                 }
             }

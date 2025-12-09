@@ -71,6 +71,7 @@ class SmartContract:
         self.last_oracle_data = oracle_data
 
         min_threshold = required_duration * 0.95
+        student_override = oracle_data.get("student_override", False) if oracle_data else False
 
         payout_teacher = False
         refund_student = False
@@ -80,7 +81,11 @@ class SmartContract:
         teacher_pct = (teacher_duration / required_duration) * 100
         student_pct = (student_duration / required_duration) * 100
 
-        if teacher_duration >= min_threshold and student_duration >= min_threshold:
+        # Check for student override first - student agrees to release payment regardless of attendance
+        if student_override:
+            outcome = f"Student Override: Student approved payment release. (Teacher: {teacher_pct:.0f}%, Student: {student_pct:.0f}%)"
+            payout_teacher = True
+        elif teacher_duration >= min_threshold and student_duration >= min_threshold:
             outcome = "Happy Path: Lesson Completed Successfully."
             payout_teacher = True
         elif teacher_duration < min_threshold:
@@ -179,6 +184,22 @@ class Oracle:
                     "participants": [
                         {"email": "student@uni.com", "durationSeconds": 3600}
                     ]
+                }
+            }
+        elif self.scenario == "student_override":
+            # Both attend only 50%, but student agrees to release payment
+            return {
+                "teacher_duration": 30,
+                "student_duration": 30,
+                "student_override": True,
+                "raw_json": {
+                    "meetingCode": "abc-defg-hij",
+                    "participants": [
+                        {"email": "teacher@uni.com", "durationSeconds": 1800},
+                        {"email": "student@uni.com", "durationSeconds": 1800}
+                    ],
+                    "student_override": True,
+                    "override_reason": "Student agreed to release funds to teacher"
                 }
             }
         elif self.scenario == "random":
@@ -345,8 +366,8 @@ st.sidebar.subheader("Wallet Management")
 st.sidebar.markdown(
     """
     <div style="text-align: center; margin-bottom: 15px;">
-        <a href="https://polygon.com" target="_blank">
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=https://polygon.com" style="border-radius: 10px; border: 2px solid #333;">
+        <a href="https://amoy.polygonscan.com/address/0x1397ec5db7a62a90c10b3ac949c225fdf057773f" target="_blank">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=https://amoy.polygonscan.com/address/0x1397ec5db7a62a90c10b3ac949c225fdf057773f" style="border-radius: 10px; border: 2px solid #333;">
         </a>
         <div style="font-size: 0.8em; color: #A0AEC0; margin-top: 5px;">
             Scan to fund Student Wallet
@@ -366,13 +387,14 @@ st.sidebar.markdown("---")
 
 scenario = st.sidebar.selectbox(
     "Select Scenario",
-    ("Happy Path", "Student No-Show", "Teacher No-Show", "Random")
+    ("Happy Path", "Student No-Show", "Teacher No-Show", "Student Override", "Random")
 )
 
 scenario_map = {
     "Happy Path": "happy_path",
     "Student No-Show": "student_no_show",
     "Teacher No-Show": "teacher_no_show",
+    "Student Override": "student_override",
     "Random": "random"
 }
 
@@ -408,16 +430,16 @@ col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(label="Student Wallet", value=format_currency(balances['student']), delta=format_matic(balances['student']), delta_color="off")
-    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xStudent)", unsafe_allow_html=True)
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0x1397ec5db7a62a90c10b3ac949c225fdf057773f)", unsafe_allow_html=True)
 with col2:
     st.metric(label="Smart Contract (Escrow)", value=format_currency(balances['contract']), delta=format_matic(balances['contract']), delta_color="off")
-    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xContract)", unsafe_allow_html=True)
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0x432c90E7808B6fB474F7886e691Af3664c9C5b28#code)", unsafe_allow_html=True)
 with col3:
     st.metric(label="Teacher Wallet", value=format_currency(balances['teacher']), delta=format_matic(balances['teacher']), delta_color="off")
-    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xTeacher)", unsafe_allow_html=True)
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xcffdbf68a5f49b72efd81bc39911ec94a51cecda)", unsafe_allow_html=True)
 with col4:
     st.metric(label="Platform Wallet", value=format_currency(balances['platform']), delta=format_matic(balances['platform']), delta_color="off")
-    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xPlatform)", unsafe_allow_html=True)
+    st.markdown("[View on Explorer ↗](https://amoy.polygonscan.com/address/0xcffdbf68a5f49b72efd81bc39911ec94a51cecda)", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -528,5 +550,5 @@ for log in reversed(logs):
         
     st.code(f"> {msg}", language="text")
     if tx:
-        st.markdown(f"[View Transaction on PolygonScan](https://amoy.polygonscan.com/tx/{tx})")
+        st.markdown(f"[View Transaction on PolygonScan](https://amoy.polygonscan.com/tx/0xe695d8b80f4d094672af19477bbc9ec536dff2bdf0b90df7c78c920c07c8d579)")
     st.markdown("---")
